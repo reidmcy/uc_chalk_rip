@@ -5,27 +5,42 @@ import os
 import urllib.parse
 import shutil
 import getpass
-
+import argparse
+import time
 
 baseURL = "https://chalk.uchicago.edu/"
-
-#startURL = "https://chalk.uchicago.edu/webapps/portal/execute/defaultTab"
 loginURL = 'https://chalk.uchicago.edu/webapps/login/'
 classesURL = "https://chalk.uchicago.edu/webapps/portal/execute/tabs/tabAction?tab_tab_group_id=_1_1&forwardUrl=detach_module%2F_25_1%2Fbb"
 
+dirhtml = "Raw.html"
+
 classNameRegex = re.compile(r".*?: (\w+ \w+) (\(.*\)) (.*)")
 
-scannedNames = {
-"Course Material",
-"Assignments",
-"Syllabus",
-"Course Documents",
-"Labs/Lectures",
+ignoredMenus = {
+    "Home",
+    "Announcements",
+    "Discussions",
+    "Library Course Reserves",
+    "Send Email",
+    "Tools",
+    "Contacts",
+    "My Grades",
+    "Class Email",
+    "Groups",
+    "Glossary",
+    "Discussion Board",
 }
 
-def getClasses(session):
-    if os.path.isfile("login.txt"):
-        with open("login.txt") as f:
+def argumentParser():
+    parser = argparse.ArgumentParser(description = "chalk_rip grab's all your class files from chalk.uchicago.edu")
+    parser.add_argument('--login', '-l', help = "file with the first line your username and the second your password")
+    parser.add_argument('--output', '-o', help = "directory to output to")
+    parser.add_argument('--full', '-f', action = 'store_true', default = False, help = "Download all files, overwriting exiting ones")
+    return parser.parse_args()
+
+def getClasses(session, login = None):
+    if login is not None:
+        with open(login) as f:
             username = f.readline().strip()
             password = f.readline().strip()
     else:
@@ -45,17 +60,17 @@ def getClasses(session):
     classes = {}
 
     for t in soup.findAll('a'):
-        classes[t.text] = baseURL + t.get("href").strip()
+        classes[t.text] = urllib.parse.urljoin(baseURL, t.get("href").strip())
 
     print("Found {} classes".format(len(classes)))
     return classes
 
-def getSubDir(name, url, session, level = 1):
+def getSubDir(name, url, session, level = 1, full = False):
     name = name.replace("/", " ")
     os.makedirs(name, exist_ok = True)
     os.chdir(name)
     r = session.get(url)
-    with open("Contents.html", 'w') as f:
+    with open(dirhtml, 'w') as f:
         f.write(r.text)
     soup = BeautifulSoup(r.text, 'html.parser')
     tableTag = soup.find("div", {"id" : 'containerdiv'})
@@ -73,20 +88,22 @@ def getSubDir(name, url, session, level = 1):
                         fileName = "{}.txt".format(headerName)
                     else:
                         fileName = "{}.{}".format(headerName, aReq.headers['Content-Type'].split('/')[1])
-                    print("{} > {}".format('\t' + '\t' * level, fileName))
-                    if not os.path.isfile(fileName):
+                    if not os.path.isfile(fileName) or full:
+                        print("{}+ {}".format('\t' + '\t' * level, fileName))
                         try:
                             with open(fileName, 'wb') as f:
                                 shutil.copyfileobj(aReq.raw, f)
                         except KeyboardInterrupt as e:
                             os.remove(fileName)
                             raise e
+                    else:
+                        print("{}o {}".format('\t' + '\t' * level, fileName))
                 else:
-                    print("{}+ {}".format('\t' + '\t' * level, headerName))
-                    getSubDir(headerName, aURL, session, level + 1)
+                    print("{}v {}".format('\t' + '\t' * level, headerName))
+                    getSubDir(headerName, aURL, session, level + 1, full = full)
     os.chdir('..')
 
-def getClassDocs(name, url, session):
+def getClassDocs(name, url, session, full = False):
     regex = re.match(classNameRegex, name)
     classDirName = "{}-{}".format(regex.group(1), regex.group(3)).replace("/"," ")
     print("Proccessing: {}".format(classDirName))
@@ -96,19 +113,32 @@ def getClassDocs(name, url, session):
     with open(classDirName + '.html', 'w') as f:
         f.write(r.text)
     soup = BeautifulSoup(r.text, 'html.parser')
-    for subDirName in scannedNames:
-        t = soup.find("span", {"title" : subDirName})
-        if t is not None:
-            print("\t + {}".format(subDirName))
-            subURL = urllib.parse.urljoin(baseURL, t.parent.get("href"))
-            getSubDir(subDirName, subURL, session)
+    courseMenu = soup.find('ul', {'class' : "courseMenu"})
+    for menuItem in courseMenu.findAll('span'):
+        if menuItem.get('title') not in ignoredMenus:
+            print("\tv {}".format(menuItem.get('title')))
+            subURL = urllib.parse.urljoin(baseURL, menuItem.parent.get("href"))
+            getSubDir(menuItem.get('title'), subURL, session, full = full)
     os.chdir("..")
 
 def main():
-    s = requests.Session()
-    cd = getClasses(s)
-    for className, classURL in cd.items():
-        getClassDocs(className, classURL, s)
+    try:
+        args = argumentParser()
+        s = requests.Session()
+        cd = getClasses(s, args.login)
+        if args.output is not None:
+            os.makedirs(args.output, exist_ok = True)
+            os.chdir(args.output)
+        for className, classURL in cd.items():
+            try:
+                getClassDocs(className, classURL, s, full = args.full)
+            except KeyboardInterrupt:
+                for i in range(3):
+                    print("\rCanceling Class download, press ^C again within {} seconds to halt".format(3 - i), end = "")
+                    time.sleep(1)
+                print("")
+    except KeyboardInterrupt:
+        print('\rCanceling run                                                      ')
 
 if __name__ == "__main__":
     main()

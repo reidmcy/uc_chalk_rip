@@ -1,1 +1,1 @@
-from .chalk import *
+from .chalk import main

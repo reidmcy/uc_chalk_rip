@@ -1,7 +1,7 @@
 login.txt
 .DS_Store
 !chalkrip
-
+*.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

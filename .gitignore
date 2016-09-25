@@ -1,4 +1,4 @@
-*/*
+*/
 login.txt
-.*
+.DS_Store
 !.gitignore

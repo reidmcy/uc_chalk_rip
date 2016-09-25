@@ -1,6 +1,5 @@
 import requests
 from bs4 import BeautifulSoup
-from loginform import fill_login_form
 import re
 import os
 import urllib.parse

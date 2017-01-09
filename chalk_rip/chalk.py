@@ -15,6 +15,8 @@ classesURL = "https://chalk.uchicago.edu/webapps/portal/execute/tabs/tabAction?t
 
 dirhtml = "Raw.html"
 
+debugDir = 'debug'
+
 classNameRegex = re.compile(r".*?: (\w+ \w+) (\(.*\)) (.*)")
 
 ignoredMenus = {
@@ -30,6 +32,8 @@ ignoredMenus = {
     "Groups",
     "Glossary",
     "Discussion Board",
+    "Email",
+    "Reading Questions and Applications"
 }
 
 class LoginError(Exception):
@@ -37,13 +41,15 @@ class LoginError(Exception):
 
 def argumentParser():
     parser = argparse.ArgumentParser(description = "chalk_rip grab's all your class files from chalk.uchicago.edu")
+    parser.add_argument('outputDir', nargs='?', help = "directory to output to")
     parser.add_argument('--login', '-l', help = "file with the first line your username and the second your password")
-    parser.add_argument('--output', '-o', help = "directory to output to")
     parser.add_argument('--full', '-f', action = 'store_true', default = False, help = "Download all files, overwriting exiting ones")
+    parser.add_argument('--debug', '-d', action = 'store_true', default = False, help = "Enable debug mode")
     parser.add_argument('--single', '-s', action = 'store_true', default = False, help = "Make only one directory for each class")
+    parser.add_argument('--target', '-t', help = "Target class, only downloads classes with the given string in their name")
     return parser.parse_args()
 
-def getClasses(session, login = None):
+def getClasses(session, login = None, debug = False):
     if login is not None:
         with open(login) as f:
             username = f.readline().strip()
@@ -85,7 +91,7 @@ def getSubDir(name, url, session, level = 1, full = False, single = False):
             if aTag is not None:
                 aURL = urllib.parse.urljoin(baseURL, aTag.get('href'))
                 aReq = session.get(aURL, stream = True)
-                headerName = header.text.strip().replace('\n', ' ')
+                headerName = header.text.strip().replace('\n', ' ').replace('/', '').replace(':', '')
                 if 'text/html' not in aReq.headers['Content-Type']:
                     if '.' in headerName:
                         fileName = headerName
@@ -127,29 +133,40 @@ def getClassDocs(name, url, session, full = False, single = False):
             print("\tv {}".format(menuItem.get('title')))
             subURL = urllib.parse.urljoin(baseURL, menuItem.parent.get("href"))
             getSubDir(menuItem.get('title'), subURL, session, full = full, single = single)
+
     os.chdir("..")
 
 def main():
     try:
         args = argumentParser()
+        if args.debug:
+            os.makedirs(debugDir, exist_ok = True)
         s = requests.Session()
-        cd = getClasses(s, args.login)
-        if args.output is not None:
-            outputDir = os.path.abspath(os.path.expanduser(args.output))
+        cd = getClasses(s, args.login, debug = args.debug)
+        if args.outputDir is not None:
+            outputDir = os.path.abspath(os.path.expanduser(args.outputDir))
             os.makedirs(outputDir, exist_ok = True)
             os.chdir(outputDir)
+        currentDir = os.getcwd()
         for className, classURL in cd.items():
+            if args.target and args.target.lower() not in className.lower():
+                continue
             try:
                 getClassDocs(className, classURL, s, full = args.full, single = args.single)
             except KeyboardInterrupt:
-                for i in range(3):
-                    print("\rCanceling Class download, press ^C again within {} seconds to halt".format(3 - i), end = "")
+                os.chdir(currentDir)
+                for i in range(2):
+                    print("\rCanceling class download, press ^C again within {} seconds to halt".format(3 - i), end = "")
                     time.sleep(1)
                 print("")
+            except requests.exceptions.RequestException as e:
+                print("There was a connection issue:\n{}\nTrying again will probably solve it".format(e))
     except KeyboardInterrupt:
         print('\rCanceling run                                                      ')
     except LoginError:
         print("Login failed, your username or password was incorrect")
+        if args.debug:
+            raise
 
 if __name__ == "__main__":
     main()
